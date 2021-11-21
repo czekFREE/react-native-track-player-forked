@@ -1,6 +1,6 @@
 {
-  "name": "react-native-track-player",
-  "version": "1.2.7",
+  "name": "@czekfree/react-native-track-player-forked",
+  "version": "1.2.8-beta-1",
   "description": "A fully fledged audio module created for music apps",
   "contributors": [
     {
@@ -36,10 +36,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/react-native-kit/react-native-track-player.git"
+    "url": "https://github.com/czekFREE/react-native-track-player-forked"
   },
   "bugs": {
-    "url": "https://github.com/react-native-kit/react-native-track-player/issues"
+    "url": "https://github.com/czekFREE/react-native-track-player-forked/issues"
   },
   "scripts": {},
   "peerDependencies": {
