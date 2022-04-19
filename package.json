@@ -1,7 +1,36 @@
 {
-  "name": "@czekfree/react-native-track-player-forked",
-  "version": "1.2.8-beta-1",
-  "description": "A fully fledged audio module created for music apps",
+  "_args": [
+    [
+      "@czekfree/react-native-track-player-forked@1.2.802",
+      "/Users/jibeleck/web/player-web-yrtalk"
+    ]
+  ],
+  "_from": "@czekfree/react-native-track-player-forked@1.2.802",
+  "_id": "@czekfree/react-native-track-player-forked@1.2.802",
+  "_inBundle": false,
+  "_integrity": "sha512-ffHf+ViihIoXwCEu/z02R509LMnlsBpXo3NOtysdlPFeVCxNrtdTtEnRb0Q5IFdQCk2vdGruZnr8ldQig3wP5Q==",
+  "_location": "/@czekfree/react-native-track-player-forked",
+  "_phantomChildren": {},
+  "_requested": {
+    "type": "version",
+    "registry": true,
+    "raw": "@czekfree/react-native-track-player-forked@1.2.802",
+    "name": "@czekfree/react-native-track-player-forked",
+    "escapedName": "@czekfree%2freact-native-track-player-forked",
+    "scope": "@czekfree",
+    "rawSpec": "1.2.802",
+    "saveSpec": null,
+    "fetchSpec": "1.2.802"
+  },
+  "_requiredBy": [
+    "/"
+  ],
+  "_resolved": "https://registry.npmjs.org/@czekfree/react-native-track-player-forked/-/react-native-track-player-forked-1.2.802.tgz",
+  "_spec": "1.2.802",
+  "_where": "/Users/jibeleck/web/player-web-yrtalk",
+  "bugs": {
+    "url": "https://github.com/czekFREE/react-native-track-player-forked/issues"
+  },
   "contributors": [
     {
       "name": "David Chavez",
@@ -18,6 +47,9 @@
       "email": "dustin@curiousmedia.com"
     }
   ],
+  "dependencies": {},
+  "description": "A fully fledged audio module created for music apps",
+  "homepage": "https://github.com/czekFREE/react-native-track-player-forked#readme",
   "keywords": [
     "react",
     "react-native",
@@ -34,16 +66,15 @@
     "hooks"
   ],
   "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/czekFREE/react-native-track-player-forked"
-  },
-  "bugs": {
-    "url": "https://github.com/czekFREE/react-native-track-player-forked/issues"
-  },
-  "scripts": {},
+  "name": "@czekfree/react-native-track-player-forked",
   "peerDependencies": {
     "react": ">=16.8.6",
     "react-native": ">=0.60.0-rc.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/czekFREE/react-native-track-player-forked.git"
+  },
+  "scripts": {},
+  "version": "1.2.802"
 }
