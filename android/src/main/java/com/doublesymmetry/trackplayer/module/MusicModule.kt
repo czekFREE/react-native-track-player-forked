@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.support.v4.media.RatingCompat
+import android.util.Log
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.doublesymmetry.kotlinaudio.models.Capability
 import com.doublesymmetry.kotlinaudio.models.RepeatMode
@@ -44,17 +45,22 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     }
 
     override fun initialize() {
+        Log.d("MusicService", "MusicModule.initialize()")
+
         Timber.plant(Timber.DebugTree())
         AppForegroundTracker.start()
     }
 
     override fun onServiceConnected(name: ComponentName, service: IBinder) {
+        Log.d("MusicService", "MusicModule.onServiceConnected() " + name + " , " + service)
+
         scope.launch {
             // If a binder already exists, don't get a new one
             if (!::musicService.isInitialized) {
                 val binder: MusicService.MusicBinder = service as MusicService.MusicBinder
                 musicService = binder.service
                 musicService.setupPlayer(playerOptions)
+                musicService.notifyChildrenChanged("/")
                 playerSetUpPromise?.resolve(null)
             }
 
@@ -66,6 +72,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
      * Called when a connection to the Service has been lost.
      */
     override fun onServiceDisconnected(name: ComponentName) {
+        Log.d("MusicService", "MusicModule.onServiceDisconnected() " + name)
         scope.launch {
             isServiceBound = false
         }
@@ -262,6 +269,27 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
 
         callback.resolve(null)
     }
+
+        @ReactMethod
+        fun handleLoadChildren(map: ReadableMap?, callback: Promise) = scope.launch {
+    //      if (verifyServiceBoundOrReject(callback)) return@launch
+    //
+    //        if (map == null) {
+    //            callback.resolve(null)
+    //            return@launch
+    //        }
+    //        var bundle = Arguments.toBundle(map);
+    //
+    //        val path = map?.getString("path")
+    //        val data = map?.getString("data")
+
+    //        Log.d("MusicService", "MusicModule.handleLoadChildren() " + path + " , " + data)
+            Log.d("MusicService", "MusicModule.handleLoadChildren() ")
+
+            callback.resolve(null)
+        }
+
+
 
     @ReactMethod
     fun add(data: ReadableArray?, insertBeforeIndex: Int, callback: Promise) = scope.launch {

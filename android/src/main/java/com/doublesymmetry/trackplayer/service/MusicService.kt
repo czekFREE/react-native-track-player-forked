@@ -9,7 +9,13 @@ import android.os.Binder
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.support.v4.media.MediaBrowserCompat
+import android.support.v4.media.MediaBrowserCompat.MediaItem
+import android.support.v4.media.MediaDescriptionCompat
+import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.RatingCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.util.Log
 import androidx.annotation.MainThread
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationCompat.PRIORITY_LOW
@@ -39,12 +45,21 @@ import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 import timber.log.Timber
 
-@MainThread
-class MusicService : HeadlessJsTaskService() {
+
+import android.app.ActivityManager
+import android.os.ResultReceiver
+import android.support.v4.media.session.PlaybackStateCompat
+import com.google.android.exoplayer2.C
+import com.google.android.exoplayer2.Player
+import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
+
+class MusicService : HeadlessJsMediaBrowserTaskService() {
     private lateinit var player: QueuedAudioPlayer
     private val binder = MusicBinder()
     private val scope = MainScope()
     private var progressUpdateJob: Job? = null
+
+    private var mediaSession: MediaSessionCompat? = null
 
     /**
      * Use [appKilledPlaybackBehavior] instead.
@@ -54,7 +69,9 @@ class MusicService : HeadlessJsTaskService() {
         private set
 
     enum class AppKilledPlaybackBehavior(val string: String) {
-        CONTINUE_PLAYBACK("continue-playback"), PAUSE_PLAYBACK("pause-playback"), STOP_PLAYBACK_AND_REMOVE_NOTIFICATION("stop-playback-and-remove-notification")
+        CONTINUE_PLAYBACK("continue-playback"), PAUSE_PLAYBACK("pause-playback"), STOP_PLAYBACK_AND_REMOVE_NOTIFICATION(
+            "stop-playback-and-remove-notification"
+        )
     }
 
     private var appKilledPlaybackBehavior = AppKilledPlaybackBehavior.CONTINUE_PLAYBACK
@@ -92,6 +109,11 @@ class MusicService : HeadlessJsTaskService() {
     private var compactCapabilities: List<Capability> = emptyList()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(
+            "MusicService",
+            "MusicService.onStartCommand() " + intent + " , " + flags + " , " + startId
+        );
+
         startTask(getTaskConfig(intent))
         startAndStopEmptyNotificationToAvoidANR()
         return START_STICKY
@@ -103,7 +125,10 @@ class MusicService : HeadlessJsTaskService() {
      * information see https://github.com/doublesymmetry/react-native-track-player/issues/1666
      */
     private fun startAndStopEmptyNotificationToAvoidANR() {
-        val notificationManager = this.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        Log.d("MusicService", "MusicService.startAndStopEmptyNotificationToAvoidANR()");
+
+        val notificationManager =
+            this.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         var name = ""
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             name = "temporary_channel"
@@ -117,7 +142,7 @@ class MusicService : HeadlessJsTaskService() {
             .setCategory(Notification.CATEGORY_SERVICE)
             .setSmallIcon(ExoPlayerR.drawable.exo_notification_small_icon)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-           notificationBuilder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            notificationBuilder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         }
         val notification = notificationBuilder.build()
         startForeground(EMPTY_NOTIFICATION_ID, notification)
@@ -127,6 +152,8 @@ class MusicService : HeadlessJsTaskService() {
 
     @MainThread
     fun setupPlayer(playerOptions: Bundle?) {
+        Log.d("MusicService", "MusicService.setupPlayer()");
+
         if (this::player.isInitialized) {
             print("Player was initialized. Prevent re-initializing again")
             return
@@ -144,7 +171,7 @@ class MusicService : HeadlessJsTaskService() {
             interceptPlayerActionsTriggeredExternally = true,
             handleAudioBecomingNoisy = true,
             handleAudioFocus = playerOptions?.getBoolean(AUTO_HANDLE_INTERRUPTIONS) ?: false,
-            audioContentType = when(playerOptions?.getString(ANDROID_AUDIO_CONTENT_TYPE)) {
+            audioContentType = when (playerOptions?.getString(ANDROID_AUDIO_CONTENT_TYPE)) {
                 "music" -> AudioContentType.MUSIC
                 "speech" -> AudioContentType.SPEECH
                 "sonification" -> AudioContentType.SONIFICATION
@@ -154,12 +181,24 @@ class MusicService : HeadlessJsTaskService() {
             }
         )
 
-        val automaticallyUpdateNotificationMetadata = playerOptions?.getBoolean(AUTO_UPDATE_METADATA, true) ?: true
+        val automaticallyUpdateNotificationMetadata =
+            playerOptions?.getBoolean(AUTO_UPDATE_METADATA, true) ?: true
+
+        if (mediaSession == null) {
+            mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
+        }
+
 
         player = QueuedAudioPlayer(this@MusicService, playerConfig, bufferConfig, cacheConfig)
         player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
         observeEvents()
         setupForegrounding()
+
+        Log.d(
+            "MusicService",
+            "MusicService.seupPlayer() - sessionToken " + mediaSession?.sessionToken
+        );
+
     }
 
     @MainThread
@@ -167,7 +206,12 @@ class MusicService : HeadlessJsTaskService() {
         latestOptions = options
         val androidOptions = options.getBundle(ANDROID_OPTIONS_KEY)
 
-        appKilledPlaybackBehavior = AppKilledPlaybackBehavior::string.find(androidOptions?.getString(APP_KILLED_PLAYBACK_BEHAVIOR_KEY)) ?: AppKilledPlaybackBehavior.CONTINUE_PLAYBACK
+        Log.d("MusicService", "MusicService.updateOptions() " + options);
+
+
+        appKilledPlaybackBehavior = AppKilledPlaybackBehavior::string.find(
+            androidOptions?.getString(APP_KILLED_PLAYBACK_BEHAVIOR_KEY)
+        ) ?: AppKilledPlaybackBehavior.CONTINUE_PLAYBACK
 
         //TODO: This handles a deprecated flag. Should be removed soon.
         options.getBoolean(STOPPING_APP_PAUSES_PLAYBACK_KEY).let {
@@ -179,11 +223,17 @@ class MusicService : HeadlessJsTaskService() {
 
         ratingType = BundleUtils.getInt(options, "ratingType", RatingCompat.RATING_NONE)
 
-        player.playerOptions.alwaysPauseOnInterruption = androidOptions?.getBoolean(PAUSE_ON_INTERRUPTION_KEY) ?: false
+        player.playerOptions.alwaysPauseOnInterruption =
+            androidOptions?.getBoolean(PAUSE_ON_INTERRUPTION_KEY) ?: false
 
-        capabilities = options.getIntegerArrayList("capabilities")?.map { Capability.values()[it] } ?: emptyList()
-        notificationCapabilities = options.getIntegerArrayList("notificationCapabilities")?.map { Capability.values()[it] } ?: emptyList()
-        compactCapabilities = options.getIntegerArrayList("compactCapabilities")?.map { Capability.values()[it] } ?: emptyList()
+        capabilities = options.getIntegerArrayList("capabilities")?.map { Capability.values()[it] }
+            ?: emptyList()
+        notificationCapabilities =
+            options.getIntegerArrayList("notificationCapabilities")?.map { Capability.values()[it] }
+                ?: emptyList()
+        compactCapabilities =
+            options.getIntegerArrayList("compactCapabilities")?.map { Capability.values()[it] }
+                ?: emptyList()
 
         if (notificationCapabilities.isEmpty()) notificationCapabilities = capabilities
 
@@ -194,30 +244,49 @@ class MusicService : HeadlessJsTaskService() {
                     val pauseIcon = BundleUtils.getIconOrNull(this, options, "pauseIcon")
                     PLAY_PAUSE(playIcon = playIcon, pauseIcon = pauseIcon)
                 }
+
                 Capability.STOP -> {
                     val stopIcon = BundleUtils.getIconOrNull(this, options, "stopIcon")
                     STOP(icon = stopIcon)
                 }
+
                 Capability.SKIP_TO_NEXT -> {
                     val nextIcon = BundleUtils.getIconOrNull(this, options, "nextIcon")
                     NEXT(icon = nextIcon, isCompact = isCompact(it))
                 }
+
                 Capability.SKIP_TO_PREVIOUS -> {
                     val previousIcon = BundleUtils.getIconOrNull(this, options, "previousIcon")
                     PREVIOUS(icon = previousIcon, isCompact = isCompact(it))
                 }
+
                 Capability.JUMP_FORWARD -> {
-                    val forwardIcon = BundleUtils.getIcon(this, options, "forwardIcon", TrackPlayerR.drawable.forward)
+                    val forwardIcon = BundleUtils.getIcon(
+                        this,
+                        options,
+                        "forwardIcon",
+                        TrackPlayerR.drawable.forward
+                    )
                     FORWARD(icon = forwardIcon, isCompact = isCompact(it))
                 }
+
                 Capability.JUMP_BACKWARD -> {
-                    val backwardIcon = BundleUtils.getIcon(this, options, "rewindIcon", TrackPlayerR.drawable.rewind)
+                    val backwardIcon = BundleUtils.getIcon(
+                        this,
+                        options,
+                        "rewindIcon",
+                        TrackPlayerR.drawable.rewind
+                    )
                     BACKWARD(icon = backwardIcon, isCompact = isCompact(it))
                 }
+
                 Capability.SEEK_TO -> {
                     SEEK_TO
                 }
-                else -> { null }
+
+                else -> {
+                    null
+                }
             }
         }
 
@@ -230,8 +299,10 @@ class MusicService : HeadlessJsTaskService() {
 
         val accentColor = BundleUtils.getIntOrNull(options, "color")
         val smallIcon = BundleUtils.getIconOrNull(this, options, "icon")
-        val pendingIntent = PendingIntent.getActivity(this, 0, openAppIntent, getPendingIntentFlags())
-        val notificationConfig = NotificationConfig(buttonsList, accentColor, smallIcon, pendingIntent)
+        val pendingIntent =
+            PendingIntent.getActivity(this, 0, openAppIntent, getPendingIntentFlags())
+        val notificationConfig =
+            NotificationConfig(buttonsList, accentColor, smallIcon, pendingIntent)
 
         player.notificationManager.createNotification(notificationConfig)
 
@@ -240,7 +311,12 @@ class MusicService : HeadlessJsTaskService() {
         val updateInterval = BundleUtils.getIntOrNull(options, PROGRESS_UPDATE_EVENT_INTERVAL_KEY)
         if (updateInterval != null && updateInterval > 0) {
             progressUpdateJob = scope.launch {
-                progressUpdateEventFlow(updateInterval.toLong()).collect { emit(MusicEvents.PLAYBACK_PROGRESS_UPDATED, it) }
+                progressUpdateEventFlow(updateInterval.toLong()).collect {
+                    emit(
+                        MusicEvents.PLAYBACK_PROGRESS_UPDATED,
+                        it
+                    )
+                }
             }
         }
     }
@@ -431,7 +507,8 @@ class MusicService : HeadlessJsTaskService() {
 
     @MainThread
     fun updateNotificationMetadata(title: String?, artist: String?, artwork: String?) {
-        player.notificationManager.notificationMetadata = NotificationMetadata(title, artist, artwork)
+        player.notificationManager.notificationMetadata =
+            NotificationMetadata(title, artist, artwork)
     }
 
     @MainThread
@@ -557,15 +634,22 @@ class MusicService : HeadlessJsTaskService() {
                 // Skip initial idle state, since we are only interested when
                 // state becomes idle after not being idle
                 stopForegroundWhenNotOngoing = stateCount > 1 && it in BACKGROUNDABLE_STATES
-                removeNotificationWhenNotOngoing = stopForegroundWhenNotOngoing && it in REMOVABLE_STATES
+                removeNotificationWhenNotOngoing =
+                    stopForegroundWhenNotOngoing && it in REMOVABLE_STATES
             }
         }
 
         scope.launch {
             event.notificationStateChange.collect {
+                Log.d("MusicService", "MusicService.observeEvents - notificationStateChange");
+
                 when (it) {
                     is NotificationState.POSTED -> {
-                        Timber.d("notification posted with id=%s, ongoing=%s", it.notificationId, it.ongoing)
+                        Timber.d(
+                            "notification posted with id=%s, ongoing=%s",
+                            it.notificationId,
+                            it.ongoing
+                        )
                         notificationId = it.notificationId;
                         notification = it.notification;
                         if (it.ongoing) {
@@ -576,10 +660,14 @@ class MusicService : HeadlessJsTaskService() {
                             if (removeNotificationWhenNotOngoing || isForegroundService()) {
                                 @Suppress("DEPRECATION")
                                 stopForeground(removeNotificationWhenNotOngoing)
-                                Timber.d("stopped foregrounding%s", if (removeNotificationWhenNotOngoing) " and removed notification" else "")
+                                Timber.d(
+                                    "stopped foregrounding%s",
+                                    if (removeNotificationWhenNotOngoing) " and removed notification" else ""
+                                )
                             }
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -594,7 +682,11 @@ class MusicService : HeadlessJsTaskService() {
 
                 if (it == AudioPlayerState.ENDED && player.nextItem == null) {
                     emitQueueEndedEvent()
-                    emitPlaybackTrackChangedEvents(null, player.currentIndex, player.position.toSeconds())
+                    emitPlaybackTrackChangedEvents(
+                        null,
+                        player.currentIndex,
+                        player.position.toSeconds()
+                    )
                 }
             }
         }
@@ -631,12 +723,14 @@ class MusicService : HeadlessJsTaskService() {
                             emit(MusicEvents.BUTTON_SET_RATING, this)
                         }
                     }
+
                     is MediaSessionCallback.SEEK -> {
                         Bundle().apply {
                             putDouble("position", it.positionMs.toSeconds())
                             emit(MusicEvents.BUTTON_SEEK_TO, this)
                         }
                     }
+
                     MediaSessionCallback.PLAY -> emit(MusicEvents.BUTTON_PLAY)
                     MediaSessionCallback.PAUSE -> emit(MusicEvents.BUTTON_PAUSE)
                     MediaSessionCallback.NEXT -> emit(MusicEvents.BUTTON_SKIP_NEXT)
@@ -644,14 +738,21 @@ class MusicService : HeadlessJsTaskService() {
                     MediaSessionCallback.STOP -> emit(MusicEvents.BUTTON_STOP)
                     MediaSessionCallback.FORWARD -> {
                         Bundle().apply {
-                            val interval = latestOptions?.getDouble(FORWARD_JUMP_INTERVAL_KEY, DEFAULT_JUMP_INTERVAL) ?: DEFAULT_JUMP_INTERVAL
+                            val interval = latestOptions?.getDouble(
+                                FORWARD_JUMP_INTERVAL_KEY,
+                                DEFAULT_JUMP_INTERVAL
+                            ) ?: DEFAULT_JUMP_INTERVAL
                             putInt("interval", interval.toInt())
                             emit(MusicEvents.BUTTON_JUMP_FORWARD, this)
                         }
                     }
+
                     MediaSessionCallback.REWIND -> {
                         Bundle().apply {
-                            val interval = latestOptions?.getDouble(BACKWARD_JUMP_INTERVAL_KEY, DEFAULT_JUMP_INTERVAL) ?: DEFAULT_JUMP_INTERVAL
+                            val interval = latestOptions?.getDouble(
+                                BACKWARD_JUMP_INTERVAL_KEY,
+                                DEFAULT_JUMP_INTERVAL
+                            ) ?: DEFAULT_JUMP_INTERVAL
                             putInt("interval", interval.toInt())
                             emit(MusicEvents.BUTTON_JUMP_BACKWARD, this)
                         }
@@ -705,6 +806,11 @@ class MusicService : HeadlessJsTaskService() {
 
     @MainThread
     private fun emit(event: String?, data: Bundle? = null) {
+        Log.d(
+            "MusicService",
+            "MusicService.emit() " + event + " , " + LocalBroadcastManager.getInstance(this)
+        );
+
         val intent = Intent(EVENT_INTENT)
         intent.putExtra(EVENT_KEY, event)
         if (data != null) intent.putExtra(DATA_KEY, data)
@@ -717,14 +823,26 @@ class MusicService : HeadlessJsTaskService() {
 
     @MainThread
     override fun onBind(intent: Intent?): IBinder {
+        val superOnBindResult = super.onBind(intent);
+        Log.d("MusicService", "MusicService.onBind() " + intent);
+
+        if (superOnBindResult != null) {
+            return superOnBindResult
+        }
+
         return binder
     }
 
     @MainThread
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        Log.d("MusicService", "MusicService.onTaskRemoved() " + rootIntent);
 
         if (!::player.isInitialized) return
+
+        setErrorState("Aplikace na mobilním telefonu neběží")
+
+        notifyChildrenChanged("/")
 
         when (appKilledPlaybackBehavior) {
             AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> player.pause()
@@ -739,21 +857,400 @@ class MusicService : HeadlessJsTaskService() {
                     stopForeground(true)
                 }
 
+                Log.d("MusicService", "MusicService.onTaskRemoved - player stoped and stopingSelf");
+
                 stopSelf()
                 exitProcess(0)
             }
+
             else -> {}
         }
     }
 
+    override fun onRebind(intent: Intent?) {
+        super.onRebind(intent)
+        Log.d("MusicService", "MusicService.onRebind() " + intent);
+
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        Log.d("MusicService", "MusicService.onUnbind() " + intent);
+
+        // Return false to make the service not rebindable
+        return false
+    }
+
+    private fun ensureMediaSessionIsInitialized() {
+        if (mediaSession == null) {
+            mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
+        }
+    }
+
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d("MusicService", "MusicService.onCreate() ");
+
+        if (mediaSession == null) {
+            mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
+        }
+
+        //        Log.d("MusicService", "MusicService.onCreate() " + isMainActivityRunning());
+
+
+        //        if (!isMainActivityRunning()) {
+        //            val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+        //                Log.d("MusicService", "MusicService.onCreate() - openAppIntent " + this)
+        //
+        //                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        //                action = Intent.ACTION_VIEW
+        //            }
+        //
+        //            startActivity(openAppIntent)
+        //        }
+
+        //        setupPlayer(null)
+
+        //        mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
+
+        sessionToken = mediaSession?.sessionToken
+
+
+        //        mediaSession.setCallback(new MySessionCallback());
+    }
+
+    //    override fun on
+
+    private fun setErrorState(errorMessage: String) {
+        val playbackState = PlaybackStateCompat.Builder()
+            .setState(
+                PlaybackStateCompat.STATE_ERROR,
+                0,
+                0f
+            )
+            .setErrorMessage(
+                PlaybackStateCompat.ERROR_CODE_AUTHENTICATION_EXPIRED,
+                errorMessage
+            )
+            .build()
+        mediaSession?.setPlaybackState(playbackState)
+    }
+
+
+    private fun isMainActivityRunning(): Boolean {
+        val packageName = packageName
+
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val appTasks = activityManager.appTasks
+            for (appTask in appTasks) {
+                val taskInfo = appTask.taskInfo
+                val componentName = taskInfo.baseActivity
+                if (componentName != null && componentName.packageName == packageName) {
+                    return true
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val runningTasks = activityManager.getRunningTasks(1)
+            if (runningTasks.isNotEmpty()) {
+                val taskInfo = runningTasks[0].topActivity
+                if (taskInfo != null && taskInfo.packageName == packageName) {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+
+    override fun onGetRoot(
+        clientPackageName: String,
+        clientUid: Int,
+        rootHints: Bundle?
+    ): BrowserRoot? {
+        Log.d(
+            "MusicService",
+            "MusicService.onGetRoot() " + clientPackageName + " , " + clientUid + " , " + getApplicationContext().getPackageName() + " , " + getCurrentBrowserInfo()
+        );
+
+        //        if (clientPackageName === "android.media.browse.MediaBrowserService") {
+        //            setupPlayer(null)
+        //            mediaSession = player.mediaSession
+        //            sessionToken = mediaSession?.sessionToken
+        //        }
+
+        if (clientPackageName == getApplicationContext().getPackageName()) {
+            return null
+        }
+
+        return BrowserRoot("/", null)
+    }
+
+    override fun onLoadChildren(
+        parentId: String,
+        result: Result<MutableList<MediaItem>>
+    ) {
+        Log.d(
+            "MusicService",
+            "MusicService.onLoadChildren() " + parentId + " , " + getBrowserRootHints()
+        );
+
+        setErrorState("App on mobile phone was closed")
+
+        emit("LoadChildren", Bundle().apply { putString("parentId", parentId) })
+
+        // https://developer.android.com/reference/android/media/session/MediaSession#setSessionActivity(android.app.PendingIntent)
+
+        //        val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+        //            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        //            // Add the Uri data so apps can identify that it was a notification click
+        //            data = Uri.parse("trackplayer://notification.click")
+        //            action = Intent.ACTION_VIEW
+        //        }
+        //        val pendingIntent = PendingIntent.getActivity(this, 0, openAppIntent, getPendingIntentFlags())
+
+        //        if (parentId == "/" && ) {
+        //            val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+        //                Log.d("MusicService", "MusicService.onLoadChildren() - openAppIntent " + this)
+        //
+        //                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        //                action = Intent.ACTION_VIEW
+        //            }
+        //
+        //            startActivity(openAppIntent)
+        //
+        //        }
+
+        if (!isMainActivityRunning()) {
+
+            if (parentId == "/") {
+                val rootList = mutableListOf<MediaItem>()
+
+                val podcastsDescription = MediaDescriptionCompat.Builder().apply {
+                    setMediaId("aplikace-na-mobilnim-telefonu-nebezi")
+                    setTitle("Aplikace na mobilním telefonu neběží")
+                    setDescription("Je třeba spustil aplikaci na mobilním telefonu aby Android auto fungovalo správně")
+                    setSubtitle("Je třeba spustil aplikaci na mobilním telefonu aby Android auto fungovalo správně")
+                    setExtras(Bundle().apply {
+                        putString(
+                            MediaMetadataCompat.METADATA_KEY_MEDIA_ID,
+                            "aplikace-na-mobilnim-telefonu-nebezi"
+                        )
+                        putString(
+                            MediaMetadataCompat.METADATA_KEY_TITLE,
+                            "Aplikace na mobilním telefonu neběží"
+                        )
+                        putString(
+                            MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION,
+                            "Je třeba spustil aplikaci na mobilním telefonu aby Android auto fungovalo správně"
+                        )
+                        putString(
+                            MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE,
+                            "Aplikace na mobilním telefonu neběží"
+                        )
+                        putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                        putString(
+                            MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                            "https://storage.googleapis.com/automotive-media/album_art.jpg"
+                        )
+                    })
+                }.build()
+
+                rootList.add(MediaItem(podcastsDescription, MediaItem.FLAG_PLAYABLE))
+
+                result.sendResult(rootList)
+                return
+            }
+        }
+
+        if (parentId == "/") {
+            val rootList = mutableListOf<MediaItem>()
+
+            val podcastsDescription = MediaDescriptionCompat.Builder().apply {
+                setMediaId("Podcasts")
+                setTitle("Podcasts")
+                setDescription("Podcasts description")
+                setSubtitle("Podcasts subtitle")
+                setExtras(Bundle().apply {
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Podcasts")
+                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Podcasts")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Podcasts")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Podcasts")
+                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                    putString(
+                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                        "https://storage.googleapis.com/automotive-media/album_art.jpg"
+                    )
+                })
+            }.build()
+
+            val audiobooksDescription = MediaDescriptionCompat.Builder().apply {
+                setMediaId("Audiobooks")
+                setTitle("Audiobooks")
+                setDescription("Audiobooks description")
+                setSubtitle("Audiobooks subtitle")
+                setExtras(Bundle().apply {
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Audiobooks")
+                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Audiobooks")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Audiobooks")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Audiobooks")
+                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                    putString(
+                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                        "https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/art.jpg"
+                    )
+                })
+            }.build()
+
+            val downloadsDescription = MediaDescriptionCompat.Builder().apply {
+                setMediaId("Stažené")
+                setTitle("Stažené")
+                setDescription("Stažené description")
+                setSubtitle("Stažené subtitle")
+                setExtras(Bundle().apply {
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Stažené")
+                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Stažené")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Stažené")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Stažené")
+                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                    putString(
+                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                        "https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/art.jpg"
+                    )
+                })
+            }.build()
+
+            val searchDescription = MediaDescriptionCompat.Builder().apply {
+                setMediaId("Hledej")
+                setTitle("Hledej")
+                setDescription("Hledej description")
+                setSubtitle("Hledej subtitle")
+                setExtras(Bundle().apply {
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Hledej")
+                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Hledej")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Hledej")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Hledej")
+                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                    putString(
+                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                        "https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/art.jpg"
+                    )
+                })
+            }.build()
+
+            rootList.add(MediaItem(podcastsDescription, MediaItem.FLAG_BROWSABLE))
+            rootList.add(MediaItem(audiobooksDescription, MediaItem.FLAG_BROWSABLE))
+            rootList.add(MediaItem(downloadsDescription, MediaItem.FLAG_BROWSABLE))
+            rootList.add(MediaItem(searchDescription, MediaItem.FLAG_BROWSABLE))
+
+            Log.d("MusicService", "MusicService.onLoadChildren() - sending rootList " + rootList);
+
+            result.sendResult(rootList)
+            return
+        } else if (parentId == "Podcasts") {
+            val podcastsList = mutableListOf<MediaItem>()
+
+            val forYouDescription = MediaDescriptionCompat.Builder().apply {
+                setMediaId("Pro Tebe")
+                setTitle("Pro Tebe")
+                setDescription("Pro Tebe description")
+                setSubtitle("Pro Tebe subtitle")
+                setExtras(Bundle().apply {
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Pro Tebe")
+                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Pro Tebe")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Pro Tebe")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Pro Tebe")
+                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                    putString(
+                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
+                    )
+                })
+            }.build()
+            val historyDescription = MediaDescriptionCompat.Builder().apply {
+                setMediaId("History")
+                setTitle("History")
+                setDescription("History description")
+                setSubtitle("History subtitle")
+                setExtras(Bundle().apply {
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "History")
+                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "History")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "History")
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "History")
+                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                    putString(
+                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
+                    )
+                })
+            }.build()
+
+            val song = MediaDescriptionCompat.Builder().apply {
+                val mediaId = "wake_up_01"
+                val title = "Intro - The Way Of Waking Up (feat. Alan Watts)"
+                val description = "Intro - The Way Of Waking Up (feat. Alan Watts) - description"
+                val subtitle = "Intro - The Way Of Waking Up (feat. Alan Watts) - subtitle"
+                val uri =
+                    Uri.parse("https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/01_-_Intro_-_The_Way_Of_Waking_Up_feat_Alan_Watts.mp3")
+
+                setMediaId(mediaId)
+                setTitle(title)
+                setMediaUri(uri)
+                setDescription(description)
+                setSubtitle(subtitle)
+                setExtras(Bundle().apply {
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, mediaId)
+                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, description)
+                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, subtitle)
+                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_URI, uri.toString())
+                    putString(
+                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
+                    )
+                    putLong(
+                        MediaMetadataCompat.METADATA_KEY_DOWNLOAD_STATUS,
+                        MediaDescriptionCompat.STATUS_NOT_DOWNLOADED
+                    )
+                })
+            }.build()
+
+            podcastsList.add(MediaItem(forYouDescription, MediaItem.FLAG_BROWSABLE))
+            podcastsList.add(MediaItem(historyDescription, MediaItem.FLAG_BROWSABLE))
+            podcastsList.add(MediaItem(song, MediaItem.FLAG_PLAYABLE))
+
+            Log.d(
+                "MusicService",
+                "MusicService.onLoadChildren() - sending rootList " + podcastsList
+            );
+
+            result.sendResult(podcastsList)
+        } else {
+            result.sendResult(null)
+        }
+    }
+
+    override fun onLoadItem(itemId: String?, result: Result<MediaItem>) {
+        super.onLoadItem(itemId, result)
+    }
+
+
     @MainThread
     override fun onHeadlessJsTaskFinish(taskId: Int) {
+        Log.d("MusicService", "MusicService.onHeadlessJsTaskFinish()");
+
         // This is empty so ReactNative doesn't kill this service
     }
 
     @MainThread
     override fun onDestroy() {
         super.onDestroy()
+        Log.d("MusicService", "MusicService.onDestroy()");
         if (::player.isInitialized) {
             player.destroy()
         }
@@ -769,7 +1266,7 @@ class MusicService : HeadlessJsTaskService() {
     companion object {
         const val EMPTY_NOTIFICATION_ID = 1
         const val STATE_KEY = "state"
-        const val ERROR_KEY  = "error"
+        const val ERROR_KEY = "error"
         const val EVENT_KEY = "event"
         const val DATA_KEY = "data"
         const val TRACK_KEY = "track"
@@ -805,3 +1302,106 @@ class MusicService : HeadlessJsTaskService() {
         const val DEFAULT_JUMP_INTERVAL = 15.0
     }
 }
+
+
+//    private inner class UampPlaybackPreparer : MediaSessionConnector.PlaybackPreparer {
+//
+//        /**
+//         * UAMP supports preparing (and playing) from search, as well as media ID, so those
+//         * capabilities are declared here.
+//         *
+//         * TODO: Add support for ACTION_PREPARE and ACTION_PLAY, which mean "prepare/play something".
+//         */
+//        override fun getSupportedPrepareActions(): Long =
+//            PlaybackStateCompat.ACTION_PREPARE_FROM_MEDIA_ID or
+//                    PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID or
+//                    PlaybackStateCompat.ACTION_PREPARE_FROM_SEARCH or
+//                    PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
+//
+//        override fun onPrepare(playWhenReady: Boolean) {
+//            Log.d("uamp", "MusicService.UampPlaybackPreparer.onPrepare()")
+//
+//
+////            val recentSong = storage.loadRecentSong() ?: return
+////            onPrepareFromMediaId(
+////                recentSong.mediaId!!,
+////                playWhenReady,
+////                recentSong.description.extras
+////            )
+//        }
+//
+//        override fun onPrepareFromMediaId(
+//            mediaId: String,
+//            playWhenReady: Boolean,
+//            extras: Bundle?
+//        ) {
+//            Log.d("uamp", "MusicService.UampPlaybackPreparer.onPrepareFromMediaId()")
+//
+////            mediaSource.whenReady {
+////                val itemToPlay: MediaMetadataCompat? = mediaSource.find { item ->
+////                    item.id == mediaId
+////                }
+////                if (itemToPlay == null) {
+////                    Log.w(TAG, "Content not found: MediaID=$mediaId")
+////                    // TODO: Notify caller of the error.
+////                } else {
+////
+////                    val playbackStartPositionMs =
+////                        extras?.getLong(MEDIA_DESCRIPTION_EXTRAS_START_PLAYBACK_POSITION_MS, C.TIME_UNSET)
+////                            ?: C.TIME_UNSET
+////
+////                    preparePlaylist(
+////                        buildPlaylist(itemToPlay),
+////                        itemToPlay,
+////                        playWhenReady,
+////                        playbackStartPositionMs
+////                    )
+////                }
+////            }
+//        }
+//
+//        /**
+//         * This method is used by the Google Assistant to respond to requests such as:
+//         * - Play Geisha from Wake Up on UAMP
+//         * - Play electronic music on UAMP
+//         * - Play music on UAMP
+//         *
+//         * For details on how search is handled, see [AbstractMusicSource.search].
+//         */
+//        override fun onPrepareFromSearch(query: String, playWhenReady: Boolean, extras: Bundle?) {
+//            Log.d("uamp", "MusicService.UampPlaybackPreparer.onPrepareFromSearch()")
+//
+////            mediaSource.whenReady {
+////                val metadataList = mediaSource.search(query, extras ?: Bundle.EMPTY)
+////                if (metadataList.isNotEmpty()) {
+////                    preparePlaylist(
+////                        metadataList,
+////                        metadataList[0],
+////                        playWhenReady,
+////                        playbackStartPositionMs = C.TIME_UNSET
+////                    )
+////                }
+////            }
+//        }
+//
+//        override fun onPrepareFromUri(uri: Uri, playWhenReady: Boolean, extras: Bundle?) = Unit
+//
+//        override fun onCommand(
+//            player: Player,
+//            command: String,
+//            extras: Bundle?,
+//            cb: ResultReceiver?
+//        ) = false
+//
+////        /**
+////         * Builds a playlist based on a [MediaMetadataCompat].
+////         *
+////         * TODO: Support building a playlist by artist, genre, etc...
+////         *
+////         * @param item Item to base the playlist on.
+////         * @return a [List] of [MediaMetadataCompat] objects representing a playlist.
+////         */
+////        private fun buildPlaylist(item: MediaMetadataCompat): List<MediaMetadataCompat> =
+////            mediaSource.filter { it.album == item.album }.sortedBy { it.trackNumber }
+//    }
+
