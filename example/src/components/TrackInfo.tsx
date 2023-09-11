@@ -1,6 +1,6 @@
 import React from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
-import type { Track } from 'react-native-track-player';
+import type { Track } from '@czekfree/react-native-track-player-forked';
 
 export const TrackInfo: React.FC<{
   track?: Track;

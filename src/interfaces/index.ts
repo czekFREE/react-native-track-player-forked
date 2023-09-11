@@ -10,4 +10,5 @@ export * from './ServiceHandler';
 export * from './Track';
 export * from './TrackMetadataBase';
 export * from './UpdateOptions';
+export * from './MediaItem';
 export * from './events';

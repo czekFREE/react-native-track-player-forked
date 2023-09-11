@@ -1,13 +1,13 @@
 [
   {
-    "url": "https://react-native-track-player.js.org/example/Longing.mp3",
+    "url": "https://storage.googleapis.com/uamp/Spatial Audio/Shore.wav",
     "title": "Longing",
     "artist": "David Chavez",
     "artwork": "https://react-native-track-player.js.org/example/Longing.jpeg",
     "duration": 143
   },
   {
-    "url": "https://react-native-track-player.js.org/example/Soul%20Searching.mp3",
+    "url": "https://storage.googleapis.com/uamp/Spatial Audio/Car pass.wav",
     "title": "Soul Searching (Demo)",
     "artist": "David Chavez",
     "artwork": "https://react-native-track-player.js.org/example/Soul%20Searching.jpeg",

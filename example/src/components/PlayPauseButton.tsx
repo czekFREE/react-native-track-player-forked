@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import TrackPlayer, { useIsPlaying } from 'react-native-track-player';
+import TrackPlayer, { useIsPlaying } from '@czekfree/react-native-track-player-forked';
 import { Button } from './Button';
 
 export const PlayPauseButton: React.FC = () => {

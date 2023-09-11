@@ -1,5 +1,5 @@
 import {AppRegistry} from 'react-native';
-import TrackPlayer from 'react-native-track-player';
+import TrackPlayer from '@czekfree/react-native-track-player-forked';
 
 import App from './src/App';
 import {PlaybackService} from './src/services';

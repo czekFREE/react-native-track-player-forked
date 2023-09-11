@@ -34,45 +34,18 @@ public class MainActivity extends ReactActivity {
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
 //    Log.d("MusicService", "MainActivity.onCreate()");
-
-//    String context = requireContex();
-
-//    connection = MusicServiceConnection.getInstance(this, new ComponentName(this, MusicService.class));
-
-//    ReactInstanceManager reactInstanceManager = getReactInstanceManager();
-//    ReactContext reactApplicationContext = reactInstanceManager.getCurrentReactContext();
-//
-//
-//    reactInstanceManager.addReactInstanceEventListener(new ReactInstanceManager.ReactInstanceEventListener() {
-//      @Override
-//      public void onReactContextInitialized(ReactContext reactContext) {
-//        Log.d("MusicService", "MainActivity.onCreate() - set connection");
-//
-//        connection = MusicServiceConnection.getInstance(reactContext, new ComponentName(reactContext, MusicService.class));
-//      }
-//    });
   }
 
   @Override
   protected void onStart() {
     super.onStart();
 //    Log.d("MusicService", "MainActivity.onStart()" + connection + " " + connection.isConnected().getValue());
-
-
-//    if (connection != null) {
-//      connection.connect();
-//    }
-    // TODO - else
-
   }
 
   @Override
   public void onResume() {
     super.onResume();
 //    Log.d("MusicService", "MainActivity.onResume() " + connection.isConnected().getValue());
-
-    // TODO - finish
-//    setVolumeControlStream(AudioManager.STREAM_MUSIC);
   }
 
 
@@ -80,10 +53,6 @@ public class MainActivity extends ReactActivity {
   protected void onStop() {
     super.onStop();
 //    Log.d("MusicService", "MainActivity.onStop()" + connection + " " + connection.isConnected().getValue());
-
-//    if (connection != null) {
-//      connection.disconnect();
-//    }
   }
 
   /**

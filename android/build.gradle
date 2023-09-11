@@ -6,15 +6,16 @@ buildscript {
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:4.2.2'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.10"
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
     }
 }
 
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 def getExtOrIntegerDefault(name) {
-    return rootProject.ext.has(name) ? rootProject.ext.get(name) : (project.properties['RNTP_' + name]).toInteger()
+    return rootProject.ext.has(name) ? rootProject.ext.get(name) : project.properties['RNTP_' + name] ? (project.properties['RNTP_' + name]).toInteger() : name == "minSdkVersion" ? 21 : 33
 }
 
 android {
@@ -49,9 +50,8 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.czekFREE:kotlinaudio:v2.0.0-rc17'
-    // used when building against local maven
-//    implementation "com.github.doublesymmetry:kotlin-audio:1.2.2"
+    implementation 'com.github.czekFREE:kotlinaudio:v2.0.0-rc18'
+//     implementation 'com.github.czekFREE:kotlin-audio:main-SNAPSHOT' // this is local
 
     //noinspection GradleDynamicVersion
     implementation "com.facebook.react:react-native:+"

@@ -2,7 +2,7 @@ import TrackPlayer, {
   AppKilledPlaybackBehavior,
   Capability,
   RepeatMode,
-} from 'react-native-track-player';
+} from '@czekfree/react-native-track-player-forked';
 
 const setupPlayer = async (
   options: Parameters<typeof TrackPlayer.setupPlayer>[0]

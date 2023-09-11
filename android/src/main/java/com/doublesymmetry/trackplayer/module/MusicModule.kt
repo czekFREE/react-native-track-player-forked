@@ -4,6 +4,9 @@ import android.content.*
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.net.Uri
+import android.support.v4.media.MediaDescriptionCompat
+
 import android.support.v4.media.RatingCompat
 import android.util.Log
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -25,6 +28,8 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.*
 import javax.annotation.Nonnull
+import android.support.v4.media.MediaBrowserCompat
+import android.support.v4.media.MediaBrowserCompat.MediaItem
 
 
 /**
@@ -73,6 +78,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
      */
     override fun onServiceDisconnected(name: ComponentName) {
         Log.d("MusicService", "MusicModule.onServiceDisconnected() " + name)
+        Log.d("MusicService", "MusicModule.onServiceDisconnected() " + name)
         scope.launch {
             isServiceBound = false
         }
@@ -97,16 +103,51 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         return Track(context, bundle, musicService.ratingType)
     }
 
+    private fun bundleToMediaItem(bundle: Bundle): MediaItem {
+        val iconUri = bundle.getString("iconUri")
+        val mediaUri = bundle.getString("mediaUri")
+
+        return MediaItem(
+            MediaDescriptionCompat.Builder()
+                .setMediaId(bundle.getString("mediaId"))
+                .setTitle(bundle.getString("title"))
+                .setSubtitle(bundle.getString("subtitle"))
+                .setIconUri(if (iconUri != null) Uri.parse(iconUri) else null)
+                .setMediaUri(if (mediaUri != null) Uri.parse(mediaUri) else null)
+                .build(),
+            if (bundle.getBoolean("playable") == true) MediaItem.FLAG_PLAYABLE else MediaItem.FLAG_BROWSABLE
+        )
+    }
+
     private fun rejectWithException(callback: Promise, exception: Exception) {
         when (exception) {
             is RejectionException -> {
                 callback.reject(exception.code, exception)
             }
+
             else -> {
                 callback.reject("runtime_exception", exception)
             }
         }
     }
+
+    private fun readableArrayToMediaItem(data: ReadableArray?): MutableList<MediaBrowserCompat.MediaItem> {
+        val bundleList = Arguments.toList(data)
+        if (bundleList !is ArrayList) {
+            throw RejectionException("invalid_parameter", "Was not given an array of tracks")
+        }
+        return bundleList.map {
+            if (it is Bundle) {
+                bundleToMediaItem(it)
+            } else {
+                throw RejectionException(
+                    "invalid_track_object",
+                    "Track was not a dictionary type"
+                )
+            }
+        }.toMutableList()
+    }
+
 
     private fun readableArrayToTrackList(data: ReadableArray?): MutableList<Track> {
         val bundleList = Arguments.toList(data)
@@ -270,25 +311,33 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         callback.resolve(null)
     }
 
-        @ReactMethod
-        fun handleLoadChildren(map: ReadableMap?, callback: Promise) = scope.launch {
-    //      if (verifyServiceBoundOrReject(callback)) return@launch
-    //
-    //        if (map == null) {
-    //            callback.resolve(null)
-    //            return@launch
-    //        }
-    //        var bundle = Arguments.toBundle(map);
-    //
-    //        val path = map?.getString("path")
-    //        val data = map?.getString("data")
+    @ReactMethod
+    fun handleLoadChildren(path: String, data: ReadableArray?, callback: Promise) = scope.launch {
+        if (verifyServiceBoundOrReject(callback)) return@launch
 
-    //        Log.d("MusicService", "MusicModule.handleLoadChildren() " + path + " , " + data)
-            Log.d("MusicService", "MusicModule.handleLoadChildren() ")
 
-            callback.resolve(null)
+//        var mapBundle = Arguments.toBundle(map);
+
+//        val path = mapBundle?.getString("path")
+//        val data = mapBundle?.get("data") as ReadableArray<Bundle>?
+
+        val mediaItems = readableArrayToMediaItem(data);
+
+        Log.d("MusicService", "MusicModule.handleLoadChildren() " + path + " , " + data)
+
+        val listener = musicService.listenersByPath.get(path)
+        if (listener != null) {
+            try {
+                listener?.invoke(mediaItems)
+            } catch (err: Throwable) {
+                Log.d("MusicService", "MusicModule.handleLoadChildren() " + err)
+            }
+        } else {
+            Log.d("MusicService", "MusicModule.handleLoadChildren() - listener not available")
         }
 
+        callback.resolve(null)
+    }
 
 
     @ReactMethod

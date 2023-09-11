@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "postinstall": "rm -rf node_modules/react-native-track-player/{example,node_modules}",
+    "postinstall": "rm -rf node_modules/@czekfree/react-native-track-player-forked/{example,node_modules}",
     "android": "react-native run-android",
     "android:ide": "open -a /Applications/Android\\ Studio.app ./android",
     "android:uninstall": "adb uninstall com.example",

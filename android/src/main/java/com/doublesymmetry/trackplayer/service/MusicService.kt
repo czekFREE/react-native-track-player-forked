@@ -44,6 +44,9 @@ import kotlinx.coroutines.flow.flow
 import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 import timber.log.Timber
+import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.ConcurrentHashMap;
+import android.os.PowerManager
 
 
 import android.app.ActivityManager
@@ -59,7 +62,7 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
     private val scope = MainScope()
     private var progressUpdateJob: Job? = null
 
-    private var mediaSession: MediaSessionCompat? = null
+    protected final lateinit var mediaSession: MediaSessionCompat
 
     /**
      * Use [appKilledPlaybackBehavior] instead.
@@ -184,12 +187,17 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
         val automaticallyUpdateNotificationMetadata =
             playerOptions?.getBoolean(AUTO_UPDATE_METADATA, true) ?: true
 
-        if (mediaSession == null) {
+        if (!this::mediaSession.isInitialized) {
             mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
         }
 
-
-        player = QueuedAudioPlayer(this@MusicService, playerConfig, bufferConfig, cacheConfig)
+        player = QueuedAudioPlayer(
+            this@MusicService,
+            playerConfig,
+            bufferConfig,
+            cacheConfig,
+            mediaSession
+        )
         player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
         observeEvents()
         setupForegrounding()
@@ -837,12 +845,14 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         Log.d("MusicService", "MusicService.onTaskRemoved() " + rootIntent);
+        notifyChildrenChanged("/")
+
+        // TODO - set error conditionally based on AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION
+//        setErrorState("Aplikace na mobilním telefonu neběží")
 
         if (!::player.isInitialized) return
 
-        setErrorState("Aplikace na mobilním telefonu neběží")
 
-        notifyChildrenChanged("/")
 
         when (appKilledPlaybackBehavior) {
             AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> player.pause()
@@ -880,36 +890,47 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
         return false
     }
 
-    private fun ensureMediaSessionIsInitialized() {
-        if (mediaSession == null) {
-            mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
-        }
-    }
-
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("MusicService", "MusicService.onCreate() ");
+        Log.d("MusicService", "MusicService.onCreate()");
 
-        if (mediaSession == null) {
-            mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
+
+        if (!this::mediaSession.isInitialized) {
+            // Build a PendingIntent that can be used to launch the UI.
+            val sessionActivityPendingIntent =
+                packageManager?.getLaunchIntentForPackage(packageName)?.let { sessionIntent ->
+                    PendingIntent.getActivity(this, 0, sessionIntent, getPendingIntentFlags())
+                }
+
+            mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer").apply {
+                setSessionActivity(sessionActivityPendingIntent)
+            }
+        } else {
+            Log.d(
+                "MusicService",
+                "MusicService.onCreate() - mediasession exists, current state is " + mediaSession?.controller?.playbackState
+            );
         }
+
+        if (!isMainActivityRunning()) {
+            val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                Log.d("MusicService", "MusicService.onCreate() - openAppIntent " + this)
+
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                action = Intent.ACTION_VIEW
+            }
+
+            startActivity(openAppIntent)
+        }
+
+
+        setupPlayer(null)
 
         //        Log.d("MusicService", "MusicService.onCreate() " + isMainActivityRunning());
 
 
-        //        if (!isMainActivityRunning()) {
-        //            val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-        //                Log.d("MusicService", "MusicService.onCreate() - openAppIntent " + this)
-        //
-        //                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        //                action = Intent.ACTION_VIEW
-        //            }
-        //
-        //            startActivity(openAppIntent)
-        //        }
 
-        //        setupPlayer(null)
 
         //        mediaSession = MediaSessionCompat(this, "KotlinAudioPlayer")
 
@@ -946,6 +967,13 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
             val appTasks = activityManager.appTasks
             for (appTask in appTasks) {
                 val taskInfo = appTask.taskInfo
+
+                Log.d(
+                    "MusicService",
+                    "MusicService.isMainActivityRunning() " + appTask.taskInfo + " , " + appTask.taskInfo.isRunning + " , " + appTask.taskInfo.isVisible
+                );
+
+
                 val componentName = taskInfo.baseActivity
                 if (componentName != null && componentName.packageName == packageName) {
                     return true
@@ -965,6 +993,21 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
         return false
     }
 
+    fun isDeviceSleeping(): Boolean {
+        val powerManager = baseContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                powerManager.isDeviceIdleMode && !powerManager.isInteractive
+            } else {
+                @Suppress("DEPRECATION")
+                powerManager.isDeviceIdleMode && !powerManager.isScreenOn
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            !powerManager.isScreenOn
+        }
+    }
+
 
     override fun onGetRoot(
         clientPackageName: String,
@@ -976,31 +1019,37 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
             "MusicService.onGetRoot() " + clientPackageName + " , " + clientUid + " , " + getApplicationContext().getPackageName() + " , " + getCurrentBrowserInfo()
         );
 
-        //        if (clientPackageName === "android.media.browse.MediaBrowserService") {
-        //            setupPlayer(null)
-        //            mediaSession = player.mediaSession
-        //            sessionToken = mediaSession?.sessionToken
-        //        }
+//        if (clientPackageName === "android.media.browse.MediaBrowserService") {
+//            setupPlayer(null)
+//            mediaSession = player.mediaSession
+//            sessionToken = mediaSession?.sessionToken
+//        }
 
         if (clientPackageName == getApplicationContext().getPackageName()) {
+            Log.d("MusicService", "MusicService.onGetRoot() - return null !!");
+
             return null
         }
 
         return BrowserRoot("/", null)
     }
 
+    public val listenersByPath =
+        ConcurrentHashMap<String, (data: MutableList<MediaBrowserCompat.MediaItem>?) -> Unit>()
+
     override fun onLoadChildren(
         parentId: String,
         result: Result<MutableList<MediaItem>>
     ) {
+        val mainActivityIsRunning = isMainActivityRunning()
+
         Log.d(
             "MusicService",
-            "MusicService.onLoadChildren() " + parentId + " , " + getBrowserRootHints()
+            "MusicService.onLoadChildren() " + parentId + " , " + getBrowserRootHints() + " , mainActivityIsRunning:" + mainActivityIsRunning + " , isDeviceSleeping: " + isDeviceSleeping()
         );
 
-        setErrorState("App on mobile phone was closed")
-
         emit("LoadChildren", Bundle().apply { putString("parentId", parentId) })
+
 
         // https://developer.android.com/reference/android/media/session/MediaSession#setSessionActivity(android.app.PendingIntent)
 
@@ -1024,7 +1073,9 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
         //
         //        }
 
-        if (!isMainActivityRunning()) {
+
+        if (!mainActivityIsRunning) {
+//            setErrorState("Aplikace na mobilním telefonu neběží")
 
             if (parentId == "/") {
                 val rootList = mutableListOf<MediaItem>()
@@ -1032,8 +1083,8 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
                 val podcastsDescription = MediaDescriptionCompat.Builder().apply {
                     setMediaId("aplikace-na-mobilnim-telefonu-nebezi")
                     setTitle("Aplikace na mobilním telefonu neběží")
-                    setDescription("Je třeba spustil aplikaci na mobilním telefonu aby Android auto fungovalo správně")
-                    setSubtitle("Je třeba spustil aplikaci na mobilním telefonu aby Android auto fungovalo správně")
+                    setDescription("Je třeba spustit aplikaci na mobilním telefonu aby Android auto fungovalo správně")
+                    setSubtitle("Je třeba spustit aplikaci na mobilním telefonu aby Android auto fungovalo správně")
                     setExtras(Bundle().apply {
                         putString(
                             MediaMetadataCompat.METADATA_KEY_MEDIA_ID,
@@ -1045,7 +1096,7 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
                         )
                         putString(
                             MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION,
-                            "Je třeba spustil aplikaci na mobilním telefonu aby Android auto fungovalo správně"
+                            "Je třeba spustit aplikaci na mobilním telefonu aby Android auto fungovalo správně"
                         )
                         putString(
                             MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE,
@@ -1064,178 +1115,111 @@ class MusicService : HeadlessJsMediaBrowserTaskService() {
                 result.sendResult(rootList)
                 return
             }
-        }
 
-        if (parentId == "/") {
-            val rootList = mutableListOf<MediaItem>()
-
-            val podcastsDescription = MediaDescriptionCompat.Builder().apply {
-                setMediaId("Podcasts")
-                setTitle("Podcasts")
-                setDescription("Podcasts description")
-                setSubtitle("Podcasts subtitle")
-                setExtras(Bundle().apply {
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Podcasts")
-                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Podcasts")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Podcasts")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Podcasts")
-                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
-                    putString(
-                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
-                        "https://storage.googleapis.com/automotive-media/album_art.jpg"
-                    )
-                })
-            }.build()
-
-            val audiobooksDescription = MediaDescriptionCompat.Builder().apply {
-                setMediaId("Audiobooks")
-                setTitle("Audiobooks")
-                setDescription("Audiobooks description")
-                setSubtitle("Audiobooks subtitle")
-                setExtras(Bundle().apply {
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Audiobooks")
-                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Audiobooks")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Audiobooks")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Audiobooks")
-                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
-                    putString(
-                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
-                        "https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/art.jpg"
-                    )
-                })
-            }.build()
-
-            val downloadsDescription = MediaDescriptionCompat.Builder().apply {
-                setMediaId("Stažené")
-                setTitle("Stažené")
-                setDescription("Stažené description")
-                setSubtitle("Stažené subtitle")
-                setExtras(Bundle().apply {
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Stažené")
-                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Stažené")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Stažené")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Stažené")
-                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
-                    putString(
-                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
-                        "https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/art.jpg"
-                    )
-                })
-            }.build()
-
-            val searchDescription = MediaDescriptionCompat.Builder().apply {
-                setMediaId("Hledej")
-                setTitle("Hledej")
-                setDescription("Hledej description")
-                setSubtitle("Hledej subtitle")
-                setExtras(Bundle().apply {
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Hledej")
-                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Hledej")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Hledej")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Hledej")
-                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
-                    putString(
-                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
-                        "https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/art.jpg"
-                    )
-                })
-            }.build()
-
-            rootList.add(MediaItem(podcastsDescription, MediaItem.FLAG_BROWSABLE))
-            rootList.add(MediaItem(audiobooksDescription, MediaItem.FLAG_BROWSABLE))
-            rootList.add(MediaItem(downloadsDescription, MediaItem.FLAG_BROWSABLE))
-            rootList.add(MediaItem(searchDescription, MediaItem.FLAG_BROWSABLE))
-
-            Log.d("MusicService", "MusicService.onLoadChildren() - sending rootList " + rootList);
-
-            result.sendResult(rootList)
+            result.sendResult(null)
             return
-        } else if (parentId == "Podcasts") {
-            val podcastsList = mutableListOf<MediaItem>()
+        }
+//        } else if (parentId == "Hledej") {
+//            val podcastsList = mutableListOf<MediaItem>()
+//
+//            val forYouDescription = MediaDescriptionCompat.Builder().apply {
+//                setMediaId("Hledej - Pro Tebe")
+//                setTitle("Hledej - Pro Tebe")
+//                setDescription("Hledej - Pro Tebe description")
+//                setSubtitle("Hledej - Pro Tebe subtitle")
+//                setExtras(Bundle().apply {
+//                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Hledej - Pro Tebe")
+//                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Hledej - Pro Tebe")
+//                    putString(
+//                        MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION,
+//                        "Hledej - Pro Tebe"
+//                    )
+//                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Hledej - Pro Tebe")
+//                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+//                    putString(
+//                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+//                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
+//                    )
+//                })
+//            }.build()
+//            val historyDescription = MediaDescriptionCompat.Builder().apply {
+//                setMediaId("History")
+//                setTitle("History")
+//                setDescription("History description")
+//                setSubtitle("History subtitle")
+//                setExtras(Bundle().apply {
+//                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "History")
+//                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "History")
+//                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "History")
+//                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "History")
+//                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+//                    putString(
+//                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+//                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
+//                    )
+//                })
+//            }.build()
+//
+//            val song = MediaDescriptionCompat.Builder().apply {
+//                val mediaId = "wake_up_01"
+//                val title = "Intro - The Way Of Waking Up (feat. Alan Watts)"
+//                val description = "Intro - The Way Of Waking Up (feat. Alan Watts) - description"
+//                val subtitle = "Intro - The Way Of Waking Up (feat. Alan Watts) - subtitle"
+//                val uri =
+//                    Uri.parse("https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/01_-_Intro_-_The_Way_Of_Waking_Up_feat_Alan_Watts.mp3")
+//
+//                setMediaId(mediaId)
+//                setTitle(title)
+//                setMediaUri(uri)
+//                setDescription(description)
+//                setSubtitle(subtitle)
+//                setExtras(Bundle().apply {
+//                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, mediaId)
+//                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+//                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
+//                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, description)
+//                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, subtitle)
+//                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
+//                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_URI, uri.toString())
+//                    putString(
+//                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
+//                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
+//                    )
+//                    putLong(
+//                        MediaMetadataCompat.METADATA_KEY_DOWNLOAD_STATUS,
+//                        MediaDescriptionCompat.STATUS_NOT_DOWNLOADED
+//                    )
+//                })
+//            }.build()
+//
+//            podcastsList.add(MediaItem(forYouDescription, MediaItem.FLAG_BROWSABLE))
+//            podcastsList.add(MediaItem(historyDescription, MediaItem.FLAG_BROWSABLE))
+//            podcastsList.add(MediaItem(song, MediaItem.FLAG_PLAYABLE))
+//
+//            Log.d(
+//                "MusicService",
+//                "MusicService.onLoadChildren() - sending rootList " + podcastsList
+//            );
+//
+//            result.sendResult(podcastsList)
+//            return
+//        }
 
-            val forYouDescription = MediaDescriptionCompat.Builder().apply {
-                setMediaId("Pro Tebe")
-                setTitle("Pro Tebe")
-                setDescription("Pro Tebe description")
-                setSubtitle("Pro Tebe subtitle")
-                setExtras(Bundle().apply {
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "Pro Tebe")
-                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Pro Tebe")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "Pro Tebe")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "Pro Tebe")
-                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
-                    putString(
-                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
-                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
-                    )
-                })
-            }.build()
-            val historyDescription = MediaDescriptionCompat.Builder().apply {
-                setMediaId("History")
-                setTitle("History")
-                setDescription("History description")
-                setSubtitle("History subtitle")
-                setExtras(Bundle().apply {
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "History")
-                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, "History")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, "History")
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, "History")
-                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
-                    putString(
-                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
-                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
-                    )
-                })
-            }.build()
-
-            val song = MediaDescriptionCompat.Builder().apply {
-                val mediaId = "wake_up_01"
-                val title = "Intro - The Way Of Waking Up (feat. Alan Watts)"
-                val description = "Intro - The Way Of Waking Up (feat. Alan Watts) - description"
-                val subtitle = "Intro - The Way Of Waking Up (feat. Alan Watts) - subtitle"
-                val uri =
-                    Uri.parse("https://storage.googleapis.com/uamp/The_Kyoto_Connection_-_Wake_Up/01_-_Intro_-_The_Way_Of_Waking_Up_feat_Alan_Watts.mp3")
-
-                setMediaId(mediaId)
-                setTitle(title)
-                setMediaUri(uri)
-                setDescription(description)
-                setSubtitle(subtitle)
-                setExtras(Bundle().apply {
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, mediaId)
-                    putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, description)
-                    putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, subtitle)
-                    putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Jiri")
-                    putString(MediaMetadataCompat.METADATA_KEY_MEDIA_URI, uri.toString())
-                    putString(
-                        MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI,
-                        "https://storage.googleapis.com/automotive-media/album_art_2.jpg"
-                    )
-                    putLong(
-                        MediaMetadataCompat.METADATA_KEY_DOWNLOAD_STATUS,
-                        MediaDescriptionCompat.STATUS_NOT_DOWNLOADED
-                    )
-                })
-            }.build()
-
-            podcastsList.add(MediaItem(forYouDescription, MediaItem.FLAG_BROWSABLE))
-            podcastsList.add(MediaItem(historyDescription, MediaItem.FLAG_BROWSABLE))
-            podcastsList.add(MediaItem(song, MediaItem.FLAG_PLAYABLE))
-
+        listenersByPath.put(parentId, fun(data: MutableList<MediaBrowserCompat.MediaItem>?): Unit {
             Log.d(
                 "MusicService",
-                "MusicService.onLoadChildren() - sending rootList " + podcastsList
+                "MusicService.listenersByPath() " + parentId + " , data: " + data
             );
 
-            result.sendResult(podcastsList)
-        } else {
-            result.sendResult(null)
-        }
+            result.sendResult(data)
+        })
+
+        result.detach()
     }
 
     override fun onLoadItem(itemId: String?, result: Result<MediaItem>) {
+        Log.d("MusicService", "MusicService.onLoadItem() " + itemId);
+
         super.onLoadItem(itemId, result)
     }
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import TrackPlayer, { usePlaybackState } from 'react-native-track-player';
+import TrackPlayer, { usePlaybackState } from '@czekfree/react-native-track-player-forked';
 
 import { Button } from './Button';
 import { PlaybackError } from './PlaybackError';

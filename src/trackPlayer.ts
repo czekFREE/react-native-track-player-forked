@@ -19,6 +19,7 @@ import type {
   Track,
   TrackMetadataBase,
   UpdateOptions,
+  MediaItem
 } from './interfaces';
 
 const { TrackPlayerModule: TrackPlayer } = NativeModules;
@@ -137,6 +138,13 @@ export async function add(
 export async function load(track: Track): Promise<number | void> {
   return TrackPlayer.load(track);
 }
+
+export async function handleLoadChildren(path: string, mediaItems: MediaItem[]): Promise<void> {
+  console.log("TrackPlayerJS.handleLoadChildren()", path)
+
+  return TrackPlayer.handleLoadChildren(path, mediaItems);
+}
+
 
 /**
  * Move a track within the queue.

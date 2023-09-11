@@ -7,7 +7,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import TrackPlayer, { useActiveTrack } from 'react-native-track-player';
+import TrackPlayer, { useActiveTrack } from '@czekfree/react-native-track-player-forked';
 
 import { Button, PlayerControls, Progress, TrackInfo } from './components';
 import { QueueInitialTracksService, SetupService } from './services';

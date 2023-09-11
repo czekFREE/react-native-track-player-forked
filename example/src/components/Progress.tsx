@@ -1,7 +1,7 @@
 import Slider from '@react-native-community/slider';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import TrackPlayer, { useProgress } from 'react-native-track-player';
+import TrackPlayer, { useProgress } from '@czekfree/react-native-track-player-forked';
 
 export const Progress: React.FC<{ live?: boolean }> = ({ live }) => {
   const { position, duration } = useProgress();

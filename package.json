@@ -1,6 +1,6 @@
 {
-  "name": "react-native-track-player",
-  "version": "4.0.0-rc05",
+  "name": "@czekfree/react-native-track-player-forked",
+  "version": "4.0.0-rc05-android-auto-4",
   "description": "A fully fledged audio module created for music apps",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -67,10 +67,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/doublesymmetry/react-native-track-player.git"
+    "url": "https://github.com/czekFREE/react-native-track-player-forked.git"
   },
   "bugs": {
-    "url": "https://github.com/doublesymmetry/react-native-track-player/issues"
+    "url": "https://github.com/czekFREE/react-native-track-player-forked/issues"
   },
   "peerDependencies": {
     "react": ">=16.8.6",
